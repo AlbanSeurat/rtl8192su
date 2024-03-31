@@ -941,7 +941,7 @@ out:
 	return err;
 }
 
-static int r92su_add_key(struct wiphy *wiphy, struct net_device *ndev,
+static int r92su_add_key(struct wiphy *wiphy, struct net_device *ndev, int link_id,
 			 u8 idx, bool pairwise, const u8 *mac_addr,
 			 struct key_params *params)
 {
@@ -964,7 +964,7 @@ out_unlock:
 	return err;
 }
 
-static int r92su_del_key(struct wiphy *wiphy, struct net_device *ndev,
+static int r92su_del_key(struct wiphy *wiphy, struct net_device *ndev, int link_id,
 			 u8 idx, bool pairwise, const u8 *mac_addr)
 {
 	static const enum r92su_enc_alg no_key = NO_ENCRYPTION;
@@ -1051,7 +1051,7 @@ out:
 	return err;
 }
 
-static int r92su_set_default_key(struct wiphy *wiphy, struct net_device *ndev,
+static int r92su_set_default_key(struct wiphy *wiphy, struct net_device *ndev, int link_id,
 				 u8 idx, bool unicast, bool multicast)
 {
 	struct r92su *r92su = wiphy_priv(wiphy);
@@ -1603,7 +1603,6 @@ static const struct net_device_ops r92su_netdevice_ops = {
 	.ndo_start_xmit = r92su_start_xmit,
 	.ndo_set_mac_address = eth_mac_addr,
 	.ndo_set_rx_mode = r92su_set_rx_mode,
-	.ndo_change_mtu = eth_change_mtu,
 	.ndo_validate_addr = eth_validate_addr,
 };
 
@@ -1799,8 +1798,8 @@ int r92su_setup(struct r92su *r92su)
 		goto err_out;
 
 	memcpy(wiphy->perm_addr, r92su->eeprom.mac_addr, ETH_ALEN);
-	memcpy(r92su->wdev.netdev->dev_addr, r92su->wdev.wiphy->perm_addr,
-	       ETH_ALEN);
+	/*memcpy(r92su->wdev.netdev->dev_addr, r92su->wdev.wiphy->perm_addr,
+	       ETH_ALEN);*/
 
 err_out:
 	return err;

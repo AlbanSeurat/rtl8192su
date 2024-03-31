@@ -12,6 +12,7 @@
 #include <linux/compiler.h>
 #include <linux/crc32.h>
 #include <linux/crypto.h>
+#include <crypto/internal/cipher.h>
 #include <linux/err.h>
 #include <linux/mm.h>
 #include <linux/scatterlist.h>

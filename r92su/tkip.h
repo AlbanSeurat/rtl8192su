@@ -5,12 +5,12 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-
 #ifndef TKIP_H
 #define TKIP_H
 
 #include <linux/types.h>
 #include <linux/crypto.h>
+#include <crypto/internal/cipher.h>
 
 enum ieee80211_internal_tkip_state {
 	TKIP_STATE_NOT_INIT,
@@ -29,4 +29,6 @@ void ieee80211_tkip_encrypt_data(struct crypto_cipher *tfm,
 				 const u8 *key, struct sk_buff *skb, u64 pn);
 int ieee80211_tkip_decrypt_data(struct crypto_cipher *tfm,
 				const u8 *key, struct sk_buff *skb, u64 pn);
+
+
 #endif /* TKIP_H */

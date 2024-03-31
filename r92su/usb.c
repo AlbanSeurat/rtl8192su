@@ -680,4 +680,6 @@ module_usb_driver(r92su_driver);
 MODULE_DEVICE_TABLE(usb, r92su_usb_product_ids);
 MODULE_FIRMWARE(RTL8192SU_FIRMWARE);
 MODULE_AUTHOR("Christian Lamparter <chunkeey@googlemail.com>");
+MODULE_IMPORT_NS(CRYPTO_INTERNAL);
+MODULE_IMPORT_NS(CFG80211);
 MODULE_LICENSE("GPL");
