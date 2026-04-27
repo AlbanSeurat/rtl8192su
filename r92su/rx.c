@@ -30,9 +30,10 @@
  *****************************************************************************/
 #include <linux/kernel.h>
 #include <linux/etherdevice.h>
+#include <linux/timer.h>
 
 #include <net/ieee80211_radiotap.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #include "r92su.h"
 #include "rx.h"
@@ -202,10 +203,7 @@ static void __r92su_rx_deliver(struct r92su *r92su, struct sk_buff *skb)
 
 	skb_orphan(skb);
 
-	if (in_interrupt())
-		rc = netif_rx_ni(skb);
-	else
-		rc = netif_rx(skb);
+	rc = netif_rx(skb);
 
 	if (rc == NET_RX_SUCCESS) {
 		skb->dev->stats.rx_packets++;
@@ -435,8 +433,8 @@ r92su_rx_iv_handle(struct r92su *r92su, struct sk_buff *skb,
 		seq = (seq << 8) + iv[6];
 		seq = (seq << 8) + iv[5];
 		seq = (seq << 8) + iv[4];
-		seq = (seq << 8) + iv[1];
-		seq = (seq << 8) + iv[0];
+		seq = (seq << 8) + iv[3];
+		seq = (seq << 8) + iv[2];
 		if (seq <= key->ccmp.rx_seq)
 			return RX_DROP;
 
@@ -540,10 +538,12 @@ r92su_rx_crypto_handle(struct r92su *r92su, struct sk_buff *skb,
 						      rx_info->iv,
 						      IEEE80211_CCMP_MIC_LEN))
 				return RX_DROP;
+			remove_len = IEEE80211_CCMP_MIC_LEN;
+		} else {
+			remove_len = 0;
 		}
 
 		key->ccmp.rx_seq = rx_info->iv;
-		remove_len = IEEE80211_CCMP_MIC_LEN;
 		break;
 
 	default:
@@ -576,12 +576,12 @@ r92su_rx_data_to_8023(struct r92su *r92su, struct sk_buff *skb,
 		struct ethhdr ethhdr;
 
 		if (ieee80211_data_to_8023_exthdr(skb, &ethhdr,
-		    wdev_address(&r92su->wdev), r92su->wdev.iftype))
+		    wdev_address(&r92su->wdev), r92su->wdev.iftype, 0, true))
 			return RX_DROP;
 
 		ieee80211_amsdu_to_8023s(skb, queue,
 				       wdev_address(&r92su->wdev),
-				       r92su->wdev.iftype, 0, NULL, NULL);
+				       r92su->wdev.iftype, 0, NULL, NULL, 0);
 		*_skb = NULL;
 
 		if (skb_queue_empty(queue)) {
@@ -799,8 +799,17 @@ r92su_rx_defrag(struct r92su *r92su, struct sk_buff *skb,
 
 		defrag->size += skb->len - hdrlen;
 
-		if (unlikely(pskb_expand_head(skb, defrag->size -
-			     skb->len, 0, GFP_ATOMIC)))
+		if (skb_is_nonlinear(skb)) {
+			struct sk_buff *new_skb;
+
+			new_skb = skb_copy_expand(skb, defrag->size - skb->len,
+					     0, GFP_ATOMIC);
+			if (!new_skb)
+				goto dropped;
+			dev_kfree_skb_any(skb);
+			skb = new_skb;
+		} else if (unlikely(pskb_expand_head(skb, defrag->size -
+					     skb->len, 0, GFP_ATOMIC)))
 			goto dropped;
 
 		while ((tmp = __skb_dequeue_tail(dq))) {
@@ -901,7 +910,7 @@ r92su_reorder_sta_release(struct r92su *r92su, struct r92su_rx_tid *tid,
 set_release_timer:
 		mod_timer(&tid->reorder_timer, tid->reorder_time[j] + 1);
 	} else {
-		del_timer(&tid->reorder_timer);
+		timer_delete(&tid->reorder_timer);
 	}
 }
 
@@ -1084,7 +1093,7 @@ rx_drop:
 #undef RX_HANDLER
 }
 
-void r92su_reorder_tid_timer(unsigned long arg)
+void r92su_reorder_tid_timer(struct timer_list *t)
 {
 	struct sk_buff_head frames;
 	struct r92su_rx_tid *tid;
@@ -1096,7 +1105,7 @@ void r92su_reorder_tid_timer(unsigned long arg)
 	__skb_queue_head_init(&frames);
 
 	rcu_read_lock();
-	tid = (struct r92su_rx_tid *) arg;
+	tid = container_of(t, struct r92su_rx_tid, reorder_timer);
 	r92su = tid->r92su;
 	sta = tid->sta;
 

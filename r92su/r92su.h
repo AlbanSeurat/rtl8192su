@@ -51,7 +51,7 @@
 #include "sta.h"
 
 #define R92SU_DRVNAME		"r92su"
-#define RTL8192SU_FIRMWARE	"rtlwifi/rtl8712u.bin"
+#define RTL8192SU_FIRMWARE	"rtl8712u.bin"
 
 #define R92SU_TX_HEAD_ROOM					\
 	(TX_DESC_SIZE + 4 /* HW/FW tx descriptor + align */	\
@@ -125,6 +125,9 @@ static const int ieee802_1d_to_ac[8] = {
 typedef u32 ep_map[__RTL8712_LAST];
 
 struct r92su {
+	/* transport */
+	struct r92su_trans *trans;
+
 	/* usb */
 	struct usb_interface *intf;
 	struct usb_device *udev;
@@ -163,6 +166,7 @@ struct r92su {
 
 	/* cfg80211 info */
 	struct ieee80211_supported_band band_2GHZ;
+	u8 bssid[ETH_ALEN];
 
 	/* scan / site survey */
 	struct cfg80211_scan_request *scan_request;

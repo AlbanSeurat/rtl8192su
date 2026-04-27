@@ -35,6 +35,8 @@
 #include <linux/rcupdate.h>
 #include <linux/skbuff.h>
 #include <linux/timer.h>
+#include <linux/timekeeping.h>
+#include <crypto/skcipher.h>
 
 #include "def.h"
 
@@ -95,7 +97,7 @@ struct r92su_key {
 				} __packed _key;
 				u8 key[WLAN_KEY_LEN_TKIP];
 			} key;
-			struct crypto_cipher *tfm;
+			struct crypto_sync_skcipher *tfm;
 		} tkip;
 
 		struct {
@@ -106,7 +108,7 @@ struct r92su_key {
 				u8 wep40_key[WLAN_KEY_LEN_WEP40];
 				u8 key[WLAN_KEY_LEN_WEP104];
 			};
-			struct crypto_cipher *tfm;
+			struct crypto_sync_skcipher *tfm;
 		} wep;
 	};
 };

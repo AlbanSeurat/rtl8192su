@@ -576,6 +576,8 @@ static int r92su_usb_probe(struct usb_interface *intf,
 	if (IS_ERR(r92su))
 		return PTR_ERR(r92su);
 
+	R92SU_INFO(r92su, "probe: starting\n");
+
 	r92su->ep_num = intf->cur_altsetting->desc.bNumEndpoints;
 	r92su->ep_map = ep_maps[r92su->ep_num];
 	if (!r92su->ep_map) {
@@ -589,7 +591,6 @@ static int r92su_usb_probe(struct usb_interface *intf,
 	r92su_set_state(r92su, R92SU_PROBE);
 
 	r92su->intf = intf;
-	intf->needs_binding = 1;
 	r92su->udev = interface_to_usbdev(intf);
 	usb_set_intfdata(intf, r92su);
 
@@ -609,9 +610,11 @@ static int r92su_usb_probe(struct usb_interface *intf,
 	if (err)
 		goto err_out;
 
+	R92SU_INFO(r92su, "probe: success\n");
 	return 0;
 
 err_out:
+	R92SU_ERR(r92su, "probe: failed with %d\n", err);
 	r92su_unregister(r92su);
 	r92su_free(r92su);
 	return err;
@@ -680,4 +683,5 @@ module_usb_driver(r92su_driver);
 MODULE_DEVICE_TABLE(usb, r92su_usb_product_ids);
 MODULE_FIRMWARE(RTL8192SU_FIRMWARE);
 MODULE_AUTHOR("Christian Lamparter <chunkeey@googlemail.com>");
+MODULE_DESCRIPTION("Ralink RTL8192SU USB WiFi driver");
 MODULE_LICENSE("GPL");

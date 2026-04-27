@@ -1,0 +1,9 @@
+./base.o
+./cam.o
+./core.o
+./debug.o
+./efuse.o
+./ps.o
+./rc.o
+./regd.o
+./stats.o

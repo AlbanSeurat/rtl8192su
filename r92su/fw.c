@@ -26,7 +26,7 @@
  * Christian Lamparter <chunkeey@googlemail.com>
  * Joshua Roys <Joshua.Roys@gtri.gatech.edu>
  * Larry Finger <Larry.Finger@lwfinger.net>
- *
+ *  
  *****************************************************************************/
 #include <linux/kernel.h>
 

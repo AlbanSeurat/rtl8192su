@@ -32,9 +32,12 @@
 #include <net/cfg80211.h>
 #include <linux/etherdevice.h>
 #include <linux/ieee80211.h>
+#include <linux/skbuff.h>
 #include <net/ieee80211_radiotap.h>
 #include <linux/ip.h>
 #include <linux/udp.h>
+
+#include <linux/version.h>
 
 #include "r92su.h"
 #include "aes_ccm.h"
@@ -47,6 +50,117 @@
 #include "wep.h"
 #include "michael.h"
 #include "trace.h"
+
+static int r92su_ieee80211_data_from_8023(struct sk_buff *skb, const u8 *addr,
+				 enum nl80211_iftype iftype, const u8 *bssid,
+				 bool qos)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	struct ieee80211_hdr hdr;
+	u16 hdrlen, ethertype;
+	__le16 fc;
+	struct ethhdr eth;
+	unsigned int hdr_len;
+	const u8 *encaps_data;
+	int encaps_len, skip_header_bytes;
+	int nh_pos, h_pos;
+	int head_need;
+
+	if (unlikely(skb->len < ETH_HLEN))
+		return -EINVAL;
+
+	memcpy(&eth, skb->data, sizeof(eth));
+
+	nh_pos = skb_network_header(skb) - skb->data;
+	h_pos = skb_transport_header(skb) - skb->data;
+
+	ethertype = ntohs(eth.h_proto);
+	fc = cpu_to_le16(IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA);
+
+	switch (iftype) {
+	case NL80211_IFTYPE_AP:
+	case NL80211_IFTYPE_AP_VLAN:
+	case NL80211_IFTYPE_P2P_GO:
+		fc |= cpu_to_le16(IEEE80211_FCTL_FROMDS);
+		memcpy(hdr.addr1, eth.h_dest, ETH_ALEN);
+		memcpy(hdr.addr2, eth.h_source, ETH_ALEN);
+		memcpy(hdr.addr3, bssid, ETH_ALEN);
+		hdrlen = 24;
+		break;
+	case NL80211_IFTYPE_STATION:
+	case NL80211_IFTYPE_P2P_CLIENT:
+	case NL80211_IFTYPE_ADHOC:
+	case NL80211_IFTYPE_OCB:
+		fc |= cpu_to_le16(IEEE80211_FCTL_TODS);
+		memcpy(hdr.addr1, bssid, ETH_ALEN);
+		memcpy(hdr.addr2, eth.h_source, ETH_ALEN);
+		memcpy(hdr.addr3, eth.h_dest, ETH_ALEN);
+		hdrlen = 24;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	hdr_len = hdrlen;
+	if (qos) {
+		fc |= cpu_to_le16(IEEE80211_STYPE_QOS_DATA);
+		hdr_len += 2;
+	}
+
+	hdr.frame_control = fc;
+	hdr.duration_id = 0;
+	hdr.seq_ctrl = 0;
+
+	skip_header_bytes = ETH_HLEN;
+	if (ethertype >= ETH_ZLEN) {
+		encaps_data = rfc1042_header;
+		encaps_len = sizeof(rfc1042_header);
+		skip_header_bytes += encaps_len + sizeof(ethertype);
+	} else {
+		encaps_data = NULL;
+		encaps_len = 0;
+	}
+
+	head_need = hdr_len - skb->len;
+	if (head_need > 0 ||
+	    nh_pos < skip_header_bytes ||
+	    h_pos < skip_header_bytes)
+		head_need += NET_SKB_PAD;
+
+	head_need = max_t(int, head_need - skb_headroom(skb), 0);
+
+	if (skb_is_nonlinear(skb) && head_need > 0) {
+		struct sk_buff *new_skb;
+
+		new_skb = skb_copy_expand(skb, head_need + skb_headroom(skb),
+					 skb_tailroom(skb), GFP_ATOMIC);
+		if (!new_skb)
+			return -ENOMEM;
+		dev_kfree_skb_any(skb);
+		skb = new_skb;
+	} else if (pskb_expand_head(skb, head_need, 0, GFP_ATOMIC))
+		return -ENOMEM;
+
+	memcpy(skb->data, &hdr, hdrlen);
+	memcpy(skb->data + hdrlen, &eth, ETH_ALEN * 2);
+	if (encaps_data) {
+		memcpy(skb->data + hdrlen + ETH_ALEN * 2, encaps_data, encaps_len);
+		skb->data[hdrlen + ETH_ALEN * 2 + encaps_len] =
+			(ethertype >> 8) & 0xff;
+		skb->data[hdrlen + ETH_ALEN * 2 + encaps_len + 1] =
+			ethertype & 0xff;
+	}
+
+	skb_reset_mac_header(skb);
+	skb_set_mac_header(skb, -skip_header_bytes);
+	skb->network_header = skb->mac_header + ETH_ALEN * 2;
+	skb->transport_header = skb->network_header;
+
+	return 0;
+#else
+	return ieee80211_data_from_8023(skb, addr, iftype, bssid, qos);
+#endif
+}
 
 static const enum rtl8712_queues_t r92su_802_1d_to_ac[] = {
 	[IEEE80211_AC_BK] = RTL8712_BKQ,
@@ -295,20 +409,28 @@ r92su_tx_prepare_tx_info(struct r92su *r92su, struct sk_buff *skb,
 {
 	struct r92su_tx_info *tx_info = r92su_get_tx_info(skb);
 	int needed_tailroom;
+	int needed_headroom;
 
-	/* The network core does not guarantee that every frame has the
-	 * needed headroom and tailroom available. So, the driver has
-	 * to check whenever there's enough required free room for the
-	 * extra data we add.
-	 */
-	needed_tailroom = r92su->wdev.netdev->needed_tailroom;
-	needed_tailroom -= skb_tailroom(skb);
+	needed_headroom = r92su->wdev.netdev->needed_headroom - skb_headroom(skb);
+	needed_headroom = max_t(int, needed_headroom, 0);
+
+	needed_tailroom = r92su->wdev.netdev->needed_tailroom - skb_tailroom(skb);
 	needed_tailroom = max_t(int, needed_tailroom, 0);
 
-	if (pskb_expand_head(skb, r92su->wdev.netdev->needed_headroom,
-			     needed_tailroom, GFP_ATOMIC)) {
-		return TX_DROP;
+	if (skb_is_nonlinear(skb) && (needed_headroom > 0 || needed_tailroom > 0)) {
+		struct sk_buff *new_skb;
+
+		new_skb = skb_copy_expand(skb, needed_headroom, needed_tailroom,
+					 GFP_ATOMIC);
+		if (!new_skb)
+			return TX_DROP;
+		dev_kfree_skb_any(skb);
+		memcpy(new_skb->cb, tx_info, sizeof(*tx_info));
+		return TX_CONTINUE;
 	}
+
+	if (pskb_expand_head(skb, needed_headroom, needed_tailroom, GFP_ATOMIC))
+		return TX_DROP;
 
 	/* clean up tx info */
 	memset(tx_info, 0, sizeof(*tx_info));
@@ -421,25 +543,25 @@ r92su_tx_add_80211(struct r92su *r92su, struct sk_buff *skb,
 {
 	struct r92su_tx_info *tx_info = r92su_get_tx_info(skb);
 	struct wireless_dev *wdev = &r92su->wdev;
-	int err, tid;
 	bool qos;
+	int err;
 
 	qos = tx_info->sta->qos_sta;
 	if (bss_priv->control_port_ethertype == skb->protocol)
 		qos = false;
 
-	err = ieee80211_data_from_8023(skb, wdev_address(wdev), wdev->iftype,
-				       bss_priv->fw_bss.bssid, qos);
+	err = r92su_ieee80211_data_from_8023(skb, wdev_address(wdev),
+					wdev->iftype, r92su->bssid, qos);
 	if (err)
 		return TX_DROP;
 
 	if (qos) {
-		struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
+		int tid = skb->priority % ARRAY_SIZE(r92su_802_1d_to_ac);
+		struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 		u8 *qos_ctl = ieee80211_get_qos_ctl(hdr);
-		memset(qos_ctl, 0, 2);
 
-		tid = skb->priority % ARRAY_SIZE(ieee802_1d_to_ac);
 		qos_ctl[0] = tid;
+		qos_ctl[1] = 0;
 
 		if (tx_info->ht_possible && !tx_info->low_rate &&
 		    skb_get_queue_mapping(skb) != IEEE80211_AC_VO &&
@@ -545,7 +667,8 @@ r92su_tx_select_key(struct r92su *r92su, struct sk_buff *skb,
 	if (!bss_priv->sta->enc_sta)
 		return TX_CONTINUE;
 
-	if (!ieee80211_is_data_present(hdr->frame_control))
+	if (!ieee80211_is_data_present(hdr->frame_control) &&
+	    bss_priv->control_port_ethertype != skb->protocol)
 		return TX_CONTINUE;
 
 	if (is_multicast_ether_addr(ieee80211_get_DA(hdr))) {
@@ -575,7 +698,7 @@ r92su_tx_select_key(struct r92su *r92su, struct sk_buff *skb,
 
 	hdr->frame_control |= cpu_to_le16(IEEE80211_FCTL_PROTECTED);
 	tx_info->key = key;
-	tx_info->needs_encrypt |= !key->uploaded;
+	tx_info->needs_encrypt = !key->uploaded;
 	return TX_CONTINUE;
 }
 
@@ -617,9 +740,6 @@ void r92su_tx(struct r92su *r92su, struct sk_buff *skb, bool inject)
 
 	__skb_queue_head_init(&in_queue);
 	__skb_queue_head_init(&out_queue);
-
-	if (!r92su_is_connected(r92su))
-		goto err_out;
 
 	rcu_read_lock();
 
