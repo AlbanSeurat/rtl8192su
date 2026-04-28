@@ -1240,10 +1240,11 @@ void r92su_rx(struct r92su *r92su, void *buf, const unsigned int len)
 
 			i3e = ((void *) buf) + hdr_len + shift;
 			skb = rx92su_rx_copy_data(rx, hdr_len, i3e, pkt_len);
-			if (skb)
+			if (skb) {
 				skb_queue_tail(&r92su->rx_queue, skb);
-			else
+			} else {
 				r92su_rx_dropped(r92su, 1);
+			}
 		}
 		buf += ALIGN(hdr_len + pkt_len, r92su->rx_alignment);
 	}

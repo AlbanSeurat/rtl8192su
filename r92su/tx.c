@@ -50,6 +50,7 @@
 #include "wep.h"
 #include "michael.h"
 #include "trace.h"
+#include "debug.h"
 
 static int r92su_ieee80211_data_from_8023(struct sk_buff *skb, const u8 *addr,
 				 enum nl80211_iftype iftype, const u8 *bssid,
@@ -57,104 +58,124 @@ static int r92su_ieee80211_data_from_8023(struct sk_buff *skb, const u8 *addr,
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
 	struct ieee80211_hdr hdr;
-	u16 hdrlen, ethertype;
-	__le16 fc;
 	struct ethhdr eth;
-	unsigned int hdr_len;
-	const u8 *encaps_data;
-	int encaps_len, skip_header_bytes;
-	int nh_pos, h_pos;
+	__le16 fc;
+	u16 hdrlen;
+	u16 ethertype;
+	int encaps_len = 0;
 	int head_need;
+	u8 *pos;
 
-	if (unlikely(skb->len < ETH_HLEN))
+	if (unlikely(!addr || !bssid))
 		return -EINVAL;
 
-	memcpy(&eth, skb->data, sizeof(eth));
+	if (unlikely(!pskb_may_pull(skb, ETH_HLEN)))
+		return -EINVAL;
 
-	nh_pos = skb_network_header(skb) - skb->data;
-	h_pos = skb_transport_header(skb) - skb->data;
+	memcpy(&eth, skb->data, ETH_HLEN);
 
 	ethertype = ntohs(eth.h_proto);
 	fc = cpu_to_le16(IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA);
+
+	memset(&hdr, 0, sizeof(hdr));
 
 	switch (iftype) {
 	case NL80211_IFTYPE_AP:
 	case NL80211_IFTYPE_AP_VLAN:
 	case NL80211_IFTYPE_P2P_GO:
 		fc |= cpu_to_le16(IEEE80211_FCTL_FROMDS);
-		memcpy(hdr.addr1, eth.h_dest, ETH_ALEN);
-		memcpy(hdr.addr2, eth.h_source, ETH_ALEN);
-		memcpy(hdr.addr3, bssid, ETH_ALEN);
-		hdrlen = 24;
+
+		/* From DS:
+		 *   addr1 = destination station
+		 *   addr2 = transmitter/BSSID
+		 *   addr3 = original source
+		 */
+		ether_addr_copy(hdr.addr1, eth.h_dest);
+		ether_addr_copy(hdr.addr2, bssid);
+		ether_addr_copy(hdr.addr3, eth.h_source);
 		break;
+
 	case NL80211_IFTYPE_STATION:
 	case NL80211_IFTYPE_P2P_CLIENT:
+		fc |= cpu_to_le16(IEEE80211_FCTL_TODS);
+
+		/* To DS:
+		 *   addr1 = receiver/BSSID
+		 *   addr2 = transmitter/source station
+		 *   addr3 = final destination
+		 */
+		ether_addr_copy(hdr.addr1, bssid);
+		ether_addr_copy(hdr.addr2, addr);
+		ether_addr_copy(hdr.addr3, eth.h_dest);
+		break;
+
 	case NL80211_IFTYPE_ADHOC:
 	case NL80211_IFTYPE_OCB:
-		fc |= cpu_to_le16(IEEE80211_FCTL_TODS);
-		memcpy(hdr.addr1, bssid, ETH_ALEN);
-		memcpy(hdr.addr2, eth.h_source, ETH_ALEN);
-		memcpy(hdr.addr3, eth.h_dest, ETH_ALEN);
-		hdrlen = 24;
+		/* Independent BSS / OCB:
+		 *   addr1 = destination
+		 *   addr2 = source
+		 *   addr3 = BSSID
+		 */
+		ether_addr_copy(hdr.addr1, eth.h_dest);
+		ether_addr_copy(hdr.addr2, eth.h_source);
+		ether_addr_copy(hdr.addr3, bssid);
 		break;
+
 	default:
 		return -EOPNOTSUPP;
 	}
 
-	hdr_len = hdrlen;
+	hdrlen = 24;
+
 	if (qos) {
 		fc |= cpu_to_le16(IEEE80211_STYPE_QOS_DATA);
-		hdr_len += 2;
+		hdrlen += IEEE80211_QOS_CTL_LEN;
 	}
 
 	hdr.frame_control = fc;
 	hdr.duration_id = 0;
 	hdr.seq_ctrl = 0;
 
-	skip_header_bytes = ETH_HLEN;
-	if (ethertype >= ETH_ZLEN) {
-		encaps_data = rfc1042_header;
-		encaps_len = sizeof(rfc1042_header);
-		skip_header_bytes += encaps_len + sizeof(ethertype);
-	} else {
-		encaps_data = NULL;
-		encaps_len = 0;
-	}
+	/* Ethernet-II frames need RFC1042/SNAP + ethertype after the 802.11
+	 * header. 802.3 length-field frames already carry their own LLC data.
+	 */
+	if (ethertype >= ETH_P_802_3_MIN)
+		encaps_len = sizeof(rfc1042_header) + 2;
 
-	head_need = hdr_len - skb->len;
-	if (head_need > 0 ||
-	    nh_pos < skip_header_bytes ||
-	    h_pos < skip_header_bytes)
-		head_need += NET_SKB_PAD;
+	head_need = hdrlen + encaps_len;
 
-	head_need = max_t(int, head_need - skb_headroom(skb), 0);
-
-	if (skb_is_nonlinear(skb) && head_need > 0) {
-		struct sk_buff *new_skb;
-
-		new_skb = skb_copy_expand(skb, head_need + skb_headroom(skb),
-					 skb_tailroom(skb), GFP_ATOMIC);
-		if (!new_skb)
-			return -ENOMEM;
-		dev_kfree_skb_any(skb);
-		skb = new_skb;
-	} else if (pskb_expand_head(skb, head_need, 0, GFP_ATOMIC))
+	if (skb_cow_head(skb, head_need))
 		return -ENOMEM;
 
-	memcpy(skb->data, &hdr, hdrlen);
-	memcpy(skb->data + hdrlen, &eth, ETH_ALEN * 2);
-	if (encaps_data) {
-		memcpy(skb->data + hdrlen + ETH_ALEN * 2, encaps_data, encaps_len);
-		skb->data[hdrlen + ETH_ALEN * 2 + encaps_len] =
-			(ethertype >> 8) & 0xff;
-		skb->data[hdrlen + ETH_ALEN * 2 + encaps_len + 1] =
-			ethertype & 0xff;
+	/* Remove the Ethernet header. The skb data now starts at the original
+	 * Ethernet payload.
+	 */
+	skb_pull(skb, ETH_HLEN);
+
+	if (encaps_len) {
+		pos = skb_push(skb, encaps_len);
+
+		memcpy(pos, rfc1042_header, sizeof(rfc1042_header));
+		pos[sizeof(rfc1042_header)] = ethertype >> 8;
+		pos[sizeof(rfc1042_header) + 1] = ethertype & 0xff;
+	}
+
+	pos = skb_push(skb, hdrlen);
+	memcpy(pos, &hdr, 24);
+
+	if (qos) {
+		pos[24] = 0;
+		pos[25] = 0;
 	}
 
 	skb_reset_mac_header(skb);
-	skb_set_mac_header(skb, -skip_header_bytes);
-	skb->network_header = skb->mac_header + ETH_ALEN * 2;
-	skb->transport_header = skb->network_header;
+
+	if (encaps_len)
+		skb_set_network_header(skb, hdrlen + encaps_len);
+	else
+		skb_set_network_header(skb, hdrlen);
+
+	skb_set_transport_header(skb, skb_network_offset(skb));
 
 	return 0;
 #else
@@ -310,7 +331,7 @@ r92su_tx_add_iv(struct r92su *r92su, struct sk_buff *skb,
 
 	case TKIP_ENCRYPTION:
 		iv[0] = (key->tkip.tx_seq >> 8) & 0xff;
-		iv[1] = ((key->tkip.tx_seq >> 8) | 0x20) & 0x7f;
+		iv[1] = ((key->tkip.tx_seq >> 16) | 0x20) & 0x7f;
 		iv[2] = (key->tkip.tx_seq) & 0xff;
 		iv[3] = (key->index << 6) | BIT(5 /* Ext IV */);
 		iv[4] = (key->tkip.tx_seq >> 16) & 0xff;
@@ -667,6 +688,12 @@ r92su_tx_select_key(struct r92su *r92su, struct sk_buff *skb,
 	if (!bss_priv->sta->enc_sta)
 		return TX_CONTINUE;
 
+	/* EAPOL frames must never be encrypted - 802.11 standard requires
+	 * EAPOL frames to be sent in cleartext during the handshake.
+	 */
+	if (skb->protocol == bss_priv->control_port_ethertype)
+		return TX_CONTINUE;
+
 	if (!ieee80211_is_data_present(hdr->frame_control) &&
 	    bss_priv->control_port_ethertype != skb->protocol)
 		return TX_CONTINUE;
@@ -775,12 +802,16 @@ tx_drop:
 
 	while ((skb = __skb_dequeue(&out_queue))) {
 		struct tx_hdr *tx_hdr = (struct tx_hdr *)skb->data;
+		struct ieee80211_hdr *i3e = (struct ieee80211_hdr *)(skb->data + TX_DESC_SIZE);
+		u8 queue = GET_TX_DESC_QUEUE_SEL(tx_hdr);
 
 		r92su->wdev.netdev->stats.tx_packets++;
 		r92su->wdev.netdev->stats.tx_bytes += skb->len;
 
+
 		trace_r92su_tx_data(wiphy_dev(r92su->wdev.wiphy), skb);
-		r92su_usb_tx(r92su, skb, GET_TX_DESC_QUEUE_SEL(tx_hdr));
+
+		r92su_usb_tx(r92su, skb, queue);
 	}
 	rcu_read_unlock();
 	return;

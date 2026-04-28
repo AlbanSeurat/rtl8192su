@@ -98,6 +98,8 @@
 #define GET_TX_DESC_QUEUE_SEL(__pdesc)				\
 	SHIFT_AND_MASK_LE(__pdesc, 1, 8, 5)
 
+#define GET_TX_DESC_MACID(__pdesc)				\
+	SHIFT_AND_MASK_LE(__pdesc, 1, 0, 5)
 #define SET_TX_DESC_MACID(__pdesc, __val)			\
 	SET_BITS_OFFSET_LE(__pdesc, 1, 0, 5, __val)
 #define SET_TX_DESC_QUEUE_SEL(__pdesc, __val)			\

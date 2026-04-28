@@ -803,10 +803,18 @@ report_cfg80211:
 	case NL80211_IFTYPE_STATION:
 		if (status == WLAN_STATUS_SUCCESS)
 			r92su_set_power(r92su, true);
-		cfg80211_connect_result(r92su->wdev.netdev,
-			join_bss->bss.bssid, bss_priv->assoc_ie,
-			bss_priv->assoc_ie_len, resp_ie, resp_ie_len,
-			status, GFP_KERNEL);
+			/*
+		 * Pass NULL as BSS to avoid potential use-after-free
+		 * when cfg80211's workqueue processes this event.
+		 * cfg80211 will look up the BSS by BSSID.
+		 */
+		cfg80211_connect_bss(r92su->wdev.netdev,
+			join_bss->bss.bssid,
+			NULL,
+			bss_priv->assoc_ie, bss_priv->assoc_ie_len,
+			resp_ie, resp_ie_len,
+			status, GFP_KERNEL,
+			NL80211_TIMEOUT_UNSPECIFIED);
 		break;
 	case NL80211_IFTYPE_ADHOC:
 		if (status == WLAN_STATUS_SUCCESS) {
