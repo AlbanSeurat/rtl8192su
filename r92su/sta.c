@@ -34,9 +34,7 @@
 #include <linux/timer.h>
 #include "r92su.h"
 #include "aes_ccm.h"
-#include "tkip.h"
 #include "sta.h"
-#include "wep.h"
 #include "rx.h"
 
 static void r92su_free_tid_rcu(struct rcu_head *head)
@@ -210,40 +208,6 @@ struct r92su_key *r92su_key_alloc(const u32 cipher, const u8 idx,
 		memcpy(new_key->mac_addr, mac_addr, ETH_ALEN);
 
 	switch (cipher) {
-	case WLAN_CIPHER_SUITE_WEP40:
-	case WLAN_CIPHER_SUITE_WEP104:
-		if (cipher == WLAN_CIPHER_SUITE_WEP40) {
-			new_key->type = WEP40_ENCRYPTION;
-			new_key->key_len = WLAN_KEY_LEN_WEP40;
-		} else {
-			new_key->type = WEP104_ENCRYPTION;
-			new_key->key_len = WLAN_KEY_LEN_WEP104;
-		}
-
-		new_key->wep.tx_seq = get_random_wep_seq();
-		new_key->wep.rx_seq = 0;
-		memcpy(new_key->wep.wep40_key, key, new_key->key_len);
-		new_key->wep.tfm = ieee80211_wep_init();
-		if (IS_ERR(new_key->wep.tfm)) {
-			kfree(new_key);
-			return ERR_PTR(PTR_ERR(new_key->wep.tfm));
-		}
-		break;
-
-	case WLAN_CIPHER_SUITE_TKIP:
-		new_key->type = TKIP_ENCRYPTION;
-		new_key->key_len = WLAN_KEY_LEN_TKIP;
-		new_key->tkip.tx_seq = 1;
-		new_key->tkip.rx_seq = 1;
-		memcpy(new_key->tkip.key.key, key,
-		       sizeof(new_key->tkip.key.key));
-		new_key->tkip.tfm = ieee80211_wep_init();
-		if (IS_ERR(new_key->tkip.tfm)) {
-			kfree(new_key);
-			return ERR_PTR(PTR_ERR(new_key->tkip.tfm));
-		}
-		break;
-
 	case WLAN_CIPHER_SUITE_CCMP:
 		new_key->type = AESCCMP_ENCRYPTION;
 		new_key->key_len = WLAN_KEY_LEN_CCMP;
@@ -273,13 +237,6 @@ void r92su_key_free(struct r92su_key *key)
 		 *	key->pairwise ? "pairwise" : "", key->type, key->index);
 		 */
 		switch (key->type) {
-		case WEP40_ENCRYPTION:
-		case WEP104_ENCRYPTION:
-			ieee80211_wep_free(key->wep.tfm);
-			break;
-		case TKIP_ENCRYPTION:
-			ieee80211_wep_free(key->tkip.tfm);
-			break;
 		case AESCCMP_ENCRYPTION:
 			ieee80211_aes_key_free(key->ccmp.tfm);
 			break;

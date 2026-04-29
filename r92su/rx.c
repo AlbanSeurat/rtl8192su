@@ -40,8 +40,6 @@
 #include "usb.h"
 #include "def.h"
 #include "event.h"
-#include "wep.h"
-#include "tkip.h"
 #include "michael.h"
 #include "aes_ccm.h"
 #include "debug.h"
@@ -526,39 +524,6 @@ r92su_rx_crypto_handle(struct r92su *r92su, struct sk_buff *skb,
 		return RX_CONTINUE;
 
 	switch (key->type) {
-	case WEP40_ENCRYPTION:
-	case WEP104_ENCRYPTION:
-		if (rx_info->needs_decrypt) {
-			if (ieee80211_wep_decrypt(key->wep.tfm, skb,
-						  key->wep.key, rx_info->iv,
-						  key->key_len, key->index)) {
-				R92SU_DBG(r92su, "RX DROP: WEP decryption failed");
-				return RX_DROP;
-			}
-		}
-
-		key->wep.rx_seq = rx_info->iv;
-		remove_len = IEEE80211_WEP_ICV_LEN;
-		break;
-
-	case TKIP_ENCRYPTION:
-		if (rx_info->needs_decrypt) {
-			if (ieee80211_tkip_decrypt_data(key->tkip.tfm,
-							key->tkip.key._key.key,
-							skb, rx_info->iv)) {
-				R92SU_DBG(r92su, "RX DROP: TKIP decryption failed");
-				return RX_DROP;
-			}
-		}
-
-		res = r92su_rx_tkip_handle(r92su, skb, key);
-		if (res != RX_CONTINUE)
-			return res;
-
-		key->tkip.rx_seq = rx_info->iv;
-		remove_len = IEEE80211_TKIP_ICV_LEN + MICHAEL_MIC_LEN;
-		break;
-
 	case AESCCMP_ENCRYPTION:
 		if (rx_info->needs_decrypt) {
 			if (ieee80211_aes_ccm_decrypt(key->ccmp.tfm, skb,

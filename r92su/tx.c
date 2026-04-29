@@ -41,13 +41,11 @@
 
 #include "r92su.h"
 #include "aes_ccm.h"
-#include "tkip.h"
 #include "tx.h"
 #include "reg.h"
 #include "def.h"
 #include "usb.h"
 #include "cmd.h"
-#include "wep.h"
 #include "michael.h"
 #include "trace.h"
 #include "debug.h"
@@ -373,41 +371,6 @@ r92su_tx_add_crypto(struct r92su *r92su, struct sk_buff *skb,
 		return TX_CONTINUE;
 
 	switch (key->type) {
-	case WEP40_ENCRYPTION:
-	case WEP104_ENCRYPTION:
-		if (tx_info->needs_encrypt) {
-			ieee80211_wep_encrypt(key->wep.tfm, skb,
-					      key->wep.key, tx_info->pn,
-					      key->key_len, key->index);
-		}
-
-		tx_info->ht_possible = false;
-		break;
-
-	case TKIP_ENCRYPTION: {
-		unsigned int data_len, hdr_len, iv_len;
-		u8 *data;
-
-		iv_len = r92su_get_iv_len(key);
-		hdr_len = ieee80211_hdrlen(hdr->frame_control);
-		data_len = skb->len - hdr_len - iv_len;
-		data = ((u8 *) hdr) + hdr_len + iv_len;
-
-		michael_mic(&key->tkip.key.
-			    key[NL80211_TKIP_DATA_OFFSET_TX_MIC_KEY],
-			    hdr, data, data_len, skb_put(skb, MICHAEL_MIC_LEN));
-
-		if (tx_info->needs_encrypt) {
-			skb_put(skb, IEEE80211_TKIP_ICV_LEN);
-			ieee80211_tkip_encrypt_data(key->tkip.tfm,
-						    key->tkip.key._key.key,
-						    skb, tx_info->pn);
-		}
-
-		tx_info->ht_possible = false;
-		break;
-		}
-
 	case AESCCMP_ENCRYPTION:
 		if (tx_info->needs_encrypt) {
 			ieee80211_aes_ccm_encrypt(key->ccmp.tfm, skb,
