@@ -614,7 +614,7 @@ static int r92su_usb_probe(struct usb_interface *intf,
 	return 0;
 
 err_out:
-	R92SU_ERR(r92su, "probe: failed with %d\n", err);
+	R92SU_DBG(r92su, "probe: failed with %d\n", err);
 	r92su_unregister(r92su);
 	r92su_free(r92su);
 	return err;

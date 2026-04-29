@@ -63,7 +63,7 @@ static void c2h_survey_event(struct r92su *r92su, const struct h2cc2h *c2h)
 
 	if (len < sizeof(*c2h_bss) || len != bss_len ||
 	    le32_to_cpu(c2h_bss->ie_length) <= 12) {
-		R92SU_ERR(r92su, "received survey event with bad length.");
+		R92SU_DBG(r92su, "received survey event with bad length.");
 		r92su_mark_dead(r92su);
 		return;
 	}
@@ -114,7 +114,7 @@ static void c2h_add_sta_event(struct r92su *r92su, const struct h2cc2h *c2h)
 				  le32_to_cpu(addsta->aid),
 				  GFP_ATOMIC);
 	if (!new_sta)
-		R92SU_ERR(r92su, "failed to alloc new station %pM",
+		R92SU_DBG(r92su, "failed to alloc new station %pM",
 			  addsta->mac_addr);
 }
 
@@ -151,7 +151,7 @@ static void c2h_report_pwr_state_event(struct r92su *r92su,
 	u8 cpwm_tog = pwr->state & PS_TOG;
 
 	if (r92su->cpwm_tog == cpwm_tog) {
-		R92SU_ERR(r92su, "firmware is stuck, it didn't update CPWM "
+		R92SU_DBG(r92su, "firmware is stuck, it didn't update CPWM "
 			  "(it's stuck at 0x%x)", cpwm_tog);
 	}
 
@@ -229,7 +229,7 @@ void r92su_c2h_event(struct r92su *r92su, const struct h2cc2h *c2h)
 		break;
 
 	default:
-		R92SU_ERR(r92su, "received invalid c2h event:%x\n", c2h->event);
+		R92SU_DBG(r92su, "received invalid c2h event:%x\n", c2h->event);
 		print_hex_dump_bytes("C2H:", DUMP_PREFIX_OFFSET, c2h,
 				     le16_to_cpu(c2h->len) + sizeof(*c2h));
 		r92su_mark_dead(r92su);

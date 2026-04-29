@@ -283,6 +283,7 @@ r92su_rx_deduplicate(struct r92su *r92su, struct sk_buff *skb,
 
 		if (*rx_seq == i3e->seq_ctrl) {
 			sta->drop_dup++;
+			R92SU_DBG(r92su, "RX DROP: duplicate frame (seq=%u)", i3e->seq_ctrl);
 			return RX_DROP;
 		}
 
@@ -298,6 +299,7 @@ r92su_rx_handle_mgmt(struct r92su *r92su, struct sk_buff *skb,
 	struct ieee80211_hdr *i3e = (void *)skb->data;
 
 	if (ieee80211_is_mgmt(i3e->frame_control)) {
+		R92SU_DBG(r92su, "RX DROP: management frame dropped");
 #if 0
 		cfg80211_rx_mgmt(&r92su->wdev,
 				 r92su->current_channel->center_freq, 0,
@@ -318,8 +320,10 @@ r92su_rx_find_sta(struct r92su *r92su, struct sk_buff *skb,
 	struct r92su_rx_info *rx_info = r92su_get_rx_info(skb);
 
 	sta = r92su_sta_get(r92su, ieee80211_get_SA(hdr));
-	if (!sta)
+	if (!sta) {
+		R92SU_DBG(r92su, "RX: sta not found, using bss_priv->sta");
 		sta = bss_priv->sta;
+	}
 
 	rx_info->sta = sta;
 	return RX_CONTINUE;
@@ -345,8 +349,10 @@ r92su_rx_find_key(struct r92su *r92su, struct sk_buff *skb,
 		if (!key)
 			key = rcu_dereference(bss_priv->sta->sta_key);
 
-		if (!key)
+		if (!key) {
+			R92SU_DBG(r92su, "RX DROP: no key found for encrypted frame");
 			return RX_DROP;
+		}
 
 		rx_info->key = key;
 	} else {
@@ -365,6 +371,8 @@ r92su_rx_port_check(struct r92su *r92su, struct sk_buff *skb,
 	if (bss_priv->sta->enc_sta && !rx_info->has_protect) {
 		if (bss_priv->control_port_no_encrypt &&
 		    skb->protocol != bss_priv->control_port_ethertype) {
+			R92SU_DBG(r92su, "RX DROP: unencrypted control port frame dropped (proto=0x%x, expected=0x%x)",
+				  skb->protocol, bss_priv->control_port_ethertype);
 			return RX_DROP;
 		}
 	}
@@ -406,8 +414,10 @@ r92su_rx_iv_handle(struct r92su *r92su, struct sk_buff *skb,
 		u64 seq;
 
 		/* check ext iv */
-		if (!(iv[3] & BIT(5)))
+		if (!(iv[3] & BIT(5))) {
+			R92SU_DBG(r92su, "RX DROP: TKIP invalid ext iv");
 			return RX_DROP;
+		}
 
 		seq = iv[7];
 		seq = (seq << 8) + iv[6];
@@ -416,8 +426,11 @@ r92su_rx_iv_handle(struct r92su *r92su, struct sk_buff *skb,
 		seq = (seq << 8) + iv[0];
 		seq = (seq << 8) + iv[2];
 
-		if (key->tkip.rx_seq >= seq)
+		if (key->tkip.rx_seq >= seq) {
+			R92SU_DBG(r92su, "RX DROP: TKIP rx_seq replay attack detected (key->rx_seq=%llu, iv=%llu)",
+				  key->tkip.rx_seq, seq);
 			return RX_DROP;
+		}
 
 		rx_info->iv = seq;
 		break;
@@ -426,17 +439,22 @@ r92su_rx_iv_handle(struct r92su *r92su, struct sk_buff *skb,
 	case AESCCMP_ENCRYPTION: {
 		u64 seq;
 		/* check ext iv */
-		if (!(iv[3] & BIT(5)))
+		if (!(iv[3] & BIT(5))) {
+			R92SU_DBG(r92su, "RX DROP: AES-CCMP invalid ext iv");
 			return RX_DROP;
+		}
 
-		seq = iv[7];
-		seq = (seq << 8) + iv[6];
-		seq = (seq << 8) + iv[5];
-		seq = (seq << 8) + iv[4];
-		seq = (seq << 8) + iv[3];
-		seq = (seq << 8) + iv[2];
-		if (seq <= key->ccmp.rx_seq)
+		seq = iv[1];
+		seq = (seq << 8) + iv[0];
+		seq = (seq << 8) + iv[11];
+		seq = (seq << 8) + iv[10];
+		seq = (seq << 8) + iv[9];
+		seq = (seq << 8) + iv[8];
+		if (seq <= key->ccmp.rx_seq) {
+			R92SU_DBG(r92su, "RX DROP: AES-CCMP replay detected (key->rx_seq=%llu, iv=%llu)",
+				  key->ccmp.rx_seq, seq);
 			return RX_DROP;
+		}
 
 		rx_info->iv = seq;
 		break;
@@ -447,8 +465,10 @@ r92su_rx_iv_handle(struct r92su *r92su, struct sk_buff *skb,
 		return RX_DROP;
 	}
 
-	if (skb->len <= iv_len)
+	if (skb->len <= iv_len) {
+		R92SU_DBG(r92su, "RX DROP: skb too short for IV (len=%u, iv_len=%u)", skb->len, iv_len);
 		return RX_DROP;
+	}
 
 	memmove(((u8 *) hdr) + iv_len, hdr, hdr_len);
 	skb_pull(skb, iv_len);
@@ -468,8 +488,11 @@ r92su_rx_tkip_handle(struct r92su *r92su, struct sk_buff *skb,
 	data = ((void *) hdr) + hdr_len;
 	data_len = skb->len - hdr_len - IEEE80211_TKIP_ICV_LEN -
 		   MICHAEL_MIC_LEN;
-	if (data_len < 0)
+	if (data_len < 0) {
+		R92SU_DBG(r92su, "RX DROP: TKIP data_len negative (skb->len=%u, hdr_len=%u)",
+			  skb->len, hdr_len);
 		return RX_DROP;
+	}
 
 	tail = data + data_len;
 	michael_mic(&key->tkip.key.
@@ -477,6 +500,7 @@ r92su_rx_tkip_handle(struct r92su *r92su, struct sk_buff *skb,
 		    hdr, data, data_len, mic);
 
 	if (memcmp(mic, tail, MICHAEL_MIC_LEN) != 0) {
+		R92SU_DBG(r92su, "RX DROP: TKIP MIC verification failed");
 		cfg80211_michael_mic_failure(r92su->wdev.netdev,
 			hdr->addr2,
 			is_multicast_ether_addr(hdr->addr1) ?
@@ -508,6 +532,7 @@ r92su_rx_crypto_handle(struct r92su *r92su, struct sk_buff *skb,
 			if (ieee80211_wep_decrypt(key->wep.tfm, skb,
 						  key->wep.key, rx_info->iv,
 						  key->key_len, key->index)) {
+				R92SU_DBG(r92su, "RX DROP: WEP decryption failed");
 				return RX_DROP;
 			}
 		}
@@ -520,8 +545,10 @@ r92su_rx_crypto_handle(struct r92su *r92su, struct sk_buff *skb,
 		if (rx_info->needs_decrypt) {
 			if (ieee80211_tkip_decrypt_data(key->tkip.tfm,
 							key->tkip.key._key.key,
-							skb, rx_info->iv))
+							skb, rx_info->iv)) {
+				R92SU_DBG(r92su, "RX DROP: TKIP decryption failed");
 				return RX_DROP;
+			}
 		}
 
 		res = r92su_rx_tkip_handle(r92su, skb, key);
@@ -536,8 +563,10 @@ r92su_rx_crypto_handle(struct r92su *r92su, struct sk_buff *skb,
 		if (rx_info->needs_decrypt) {
 			if (ieee80211_aes_ccm_decrypt(key->ccmp.tfm, skb,
 						      rx_info->iv,
-						      IEEE80211_CCMP_MIC_LEN))
+						      IEEE80211_CCMP_MIC_LEN)) {
+				R92SU_DBG(r92su, "RX DROP: AES-CCMP decryption failed");
 				return RX_DROP;
+			}
 			remove_len = IEEE80211_CCMP_MIC_LEN;
 		} else {
 			remove_len = 0;
@@ -551,8 +580,11 @@ r92su_rx_crypto_handle(struct r92su *r92su, struct sk_buff *skb,
 		return RX_DROP;
 	}
 
-	if (skb->len <= remove_len)
+	if (skb->len <= remove_len) {
+		R92SU_DBG(r92su, "RX DROP: skb too short after crypto (len=%u, remove_len=%d)",
+			  skb->len, remove_len);
 		return RX_DROP;
+	}
 
 	skb_trim(skb, skb->len - remove_len);
 	return RX_CONTINUE;
@@ -576,8 +608,10 @@ r92su_rx_data_to_8023(struct r92su *r92su, struct sk_buff *skb,
 		struct ethhdr ethhdr;
 
 		if (ieee80211_data_to_8023_exthdr(skb, &ethhdr,
-		    wdev_address(&r92su->wdev), r92su->wdev.iftype, 0, true))
+		    wdev_address(&r92su->wdev), r92su->wdev.iftype, 0, true)) {
+			R92SU_DBG(r92su, "RX DROP: ieee80211_data_to_8023_exthdr failed");
 			return RX_DROP;
+		}
 
 		ieee80211_amsdu_to_8023s(skb, queue,
 				       wdev_address(&r92su->wdev),
@@ -586,6 +620,7 @@ r92su_rx_data_to_8023(struct r92su *r92su, struct sk_buff *skb,
 
 		if (skb_queue_empty(queue)) {
 			/* amsdu_to_8023s encountered an error. */
+			R92SU_DBG(r92su, "RX DROP: AMSDU queue empty after split");
 			return RX_DROP;
 		}
 
@@ -597,8 +632,10 @@ r92su_rx_data_to_8023(struct r92su *r92su, struct sk_buff *skb,
 		err = ieee80211_data_to_8023(skb, wdev_address(&r92su->wdev),
 					     r92su->wdev.iftype);
 
-		if (err)
+		if (err) {
+			R92SU_DBG(r92su, "RX DROP: ieee80211_data_to_8023 failed (err=%d)", err);
 			return RX_DROP;
+		}
 
 		__skb_queue_tail(queue, skb);
 		*_skb = NULL;
@@ -629,8 +666,11 @@ r92su_rx_hw_header_check(struct r92su *r92su, struct sk_buff *skb,
 	unsigned int min_len;
 	bool has_protect, needs_decrypt = false;
 
-	if (skb->len < (sizeof(*hdr) + FCS_LEN))
+	if (skb->len < (sizeof(*hdr) + FCS_LEN)) {
+		R92SU_DBG(r92su, "RX DROP: frame too short (len=%u, min=%zu)",
+			  skb->len, sizeof(*hdr) + FCS_LEN);
 		return RX_DROP;
+	}
 
 	/* remove FCS - see comment in rx_filter about APPFCS */
 	skb_trim(skb, skb->len - FCS_LEN);
@@ -638,8 +678,10 @@ r92su_rx_hw_header_check(struct r92su *r92su, struct sk_buff *skb,
 	hdr = (struct ieee80211_hdr *) skb->data;
 
 	/* filter out frames with bad fcs... if they did end up here */
-	if (GET_RX_DESC_CRC32(&rx->hdr))
+	if (GET_RX_DESC_CRC32(&rx->hdr)) {
+		R92SU_DBG(r92su, "RX DROP: bad FCS detected");
 		return RX_DROP;
+	}
 
 	has_protect = ieee80211_has_protected(hdr->frame_control);
 
@@ -665,15 +707,21 @@ r92su_rx_hw_header_check(struct r92su *r92su, struct sk_buff *skb,
 	 */
 
 	if (!(ieee80211_is_data_present(hdr->frame_control) ||
-	     ieee80211_is_mgmt(hdr->frame_control)))
+	     ieee80211_is_mgmt(hdr->frame_control))) {
+		R92SU_DBG(r92su, "RX DROP: frame type not data/mgmt (fc=0x%x)",
+			  hdr->frame_control);
 		return RX_DROP;
+	}
 
 	/* just in case: clear out the whole skb->cb */
 	memset(skb->cb, 0, sizeof(skb->cb));
 
 	min_len = ieee80211_hdrlen(hdr->frame_control);
-	if (skb->len < min_len)
+	if (skb->len < min_len) {
+		R92SU_DBG(r92su, "RX DROP: frame too short for header (len=%u, min=%u)",
+			  skb->len, min_len);
 		return RX_DROP;
+	}
 
 	skb_set_queue_mapping(skb, r92su_get_priority(r92su, skb));
 
@@ -782,10 +830,12 @@ r92su_rx_defrag(struct r92su *r92su, struct sk_buff *skb,
 		if (cur_frag == 0)
 			goto new_queued;
 
-		if (!r92su_check_if_match(r92su, skb, dq, rx_info->key))
+		if (!r92su_check_if_match(r92su, skb, dq, rx_info->key)) {
+			R92SU_DBG(r92su, "RX DROP: defrag frame doesn't match queue");
 			goto dropped;
-		else
+		} else {
 			goto queued;
+		}
 	} else {
 		struct sk_buff *tmp;
 
@@ -794,8 +844,10 @@ r92su_rx_defrag(struct r92su *r92su, struct sk_buff *skb,
 			return RX_CONTINUE;
 		}
 
-		if (!r92su_check_if_match(r92su, skb, dq, rx_info->key))
+		if (!r92su_check_if_match(r92su, skb, dq, rx_info->key)) {
+			R92SU_DBG(r92su, "RX DROP: defrag final fragment doesn't match");
 			goto dropped;
+		}
 
 		defrag->size += skb->len - hdrlen;
 
@@ -804,13 +856,17 @@ r92su_rx_defrag(struct r92su *r92su, struct sk_buff *skb,
 
 			new_skb = skb_copy_expand(skb, defrag->size - skb->len,
 					     0, GFP_ATOMIC);
-			if (!new_skb)
+			if (!new_skb) {
+				R92SU_DBG(r92su, "RX DROP: defrag skb_copy_expand failed (OOM)");
 				goto dropped;
+			}
 			dev_kfree_skb_any(skb);
 			skb = new_skb;
 		} else if (unlikely(pskb_expand_head(skb, defrag->size -
-					     skb->len, 0, GFP_ATOMIC)))
+					     skb->len, 0, GFP_ATOMIC))) {
+			R92SU_DBG(r92su, "RX DROP: defrag pskb_expand_head failed");
 			goto dropped;
+		}
 
 		while ((tmp = __skb_dequeue_tail(dq))) {
 			/* this also replaces the current ieee80211 header
@@ -941,16 +997,21 @@ r92su_rx_reorder_ampdu(struct r92su *r92su, struct sk_buff *skb,
 		goto out;
 
 	tid = rcu_dereference(rx_info->sta->rx_tid[get_tid_h(hdr)]);
-	if (!tid)
+	if (!tid) {
+		R92SU_DBG(r92su, "RX DROP: rx_tid[%d] is NULL - dropping frame", get_tid_h(hdr));
 		goto out;
+	}
 
 	spin_lock(&tid->lock);
 
 	head_seq = tid->head_seq;
 
 	/* frame with out of date sequence number */
-	if (ieee80211_sn_less(mpdu_seq, head_seq))
+	if (ieee80211_sn_less(mpdu_seq, head_seq)) {
+		R92SU_DBG(r92su, "RX DROP: AMPDU out of date (seq=%u, head=%u)",
+			  mpdu_seq, head_seq);
 		goto drop_unlock;
+	}
 
 	if (!ieee80211_sn_less(mpdu_seq, head_seq + tid->size)) {
 		head_seq = ieee80211_sn_inc(
@@ -962,8 +1023,10 @@ r92su_rx_reorder_ampdu(struct r92su *r92su, struct sk_buff *skb,
 
 	index = ieee80211_sn_sub(mpdu_seq, tid->ssn) % tid->size;
 
-	if (tid->reorder_buf[index])
+	if (tid->reorder_buf[index]) {
+		R92SU_DBG(r92su, "RX DROP: AMPDU duplicate in reorder buf (index=%d)", index);
 		goto drop_unlock;
+	}
 
 	if (mpdu_seq == tid->head_seq && tid->len == 0) {
 		tid->head_seq = ieee80211_sn_inc(mpdu_seq);
@@ -1030,6 +1093,8 @@ rx_drop:
 		dev_kfree_skb_any(skb);
 	}
 
+	R92SU_DBG(r92su, "RX: completed handler - dropped=%u", r92su->wdev.netdev->stats.rx_dropped);
+
 	while ((skb = __skb_dequeue(&frames))) {
 		RX_HANDLER_MAIN(r92su_rx_port_check);
 		r92su_rx_deliver(r92su, skb);
@@ -1060,12 +1125,16 @@ static void r92su_rx_data(struct r92su *r92su,
 	__skb_queue_head_init(&frames);
 
 	rcu_read_lock();
-	if (!r92su_is_connected(r92su))
+	if (!r92su_is_connected(r92su)) {
+		R92SU_DBG(r92su, "RX DROP: not connected - dropping frame");
 		goto rx_drop;
+	}
 
 	bss = rcu_dereference(r92su->connect_bss);
-	if (!bss)
+	if (!bss) {
+		R92SU_DBG(r92su, "RX DROP: no connect_bss - dropping frame");
 		goto rx_drop;
+	}
 
 	bss_priv = r92su_get_bss_priv(bss);
 	RX_HANDLER(r92su_rx_hw_header_check, rx);
@@ -1226,7 +1295,7 @@ void r92su_rx(struct r92su *r92su, void *buf, const unsigned int len)
 		if (GET_RX_DESC_IS_CMD(&rx->hdr)) {
 			if (len - sizeof(rx->hdr) <
 			    le16_to_cpu(rx->c2h.len) + sizeof(rx->c2h)) {
-				R92SU_ERR(r92su,
+				R92SU_DBG(r92su,
 					"received clipped c2h command.");
 				r92su_mark_dead(r92su);
 			} else
@@ -1235,14 +1304,17 @@ void r92su_rx(struct r92su *r92su, void *buf, const unsigned int len)
 			struct ieee80211_hdr *i3e;
 			struct sk_buff *skb;
 
-			if (!r92su_is_connected(r92su))
+			if (!r92su_is_connected(r92su)) {
+				R92SU_DBG(r92su, "RX: skipped frame - not connected");
 				continue;
+			}
 
 			i3e = ((void *) buf) + hdr_len + shift;
 			skb = rx92su_rx_copy_data(rx, hdr_len, i3e, pkt_len);
 			if (skb) {
 				skb_queue_tail(&r92su->rx_queue, skb);
 			} else {
+				R92SU_DBG(r92su, "RX DROP: rx92su_rx_copy_data failed (OOM)");
 				r92su_rx_dropped(r92su, 1);
 			}
 		}
@@ -1253,7 +1325,7 @@ void r92su_rx(struct r92su *r92su, void *buf, const unsigned int len)
 	return;
 
 err_garbage:
-	R92SU_ERR(r92su, "received clipped frame.");
+	R92SU_DBG(r92su, "received clipped frame.");
 	return;
 }
 

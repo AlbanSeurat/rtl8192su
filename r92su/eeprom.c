@@ -41,7 +41,7 @@
 static int r92su_parse_eeprom(struct r92su *r92su)
 {
 	if (r92su->eeprom.id != cpu_to_le16(RTL8190_EEPROM_ID)) {
-		R92SU_ERR(r92su, "eeprom signature check has failed.\n");
+		R92SU_DBG(r92su, "eeprom signature check has failed.\n");
 		return -EINVAL;
 	}
 
@@ -56,7 +56,7 @@ static int r92su_parse_eeprom(struct r92su *r92su)
 		r92su->rf_type = R92SU_2T2R;
 		break;
 	default:
-		R92SU_ERR(r92su, "unknown board type:%d.\n",
+		R92SU_DBG(r92su, "unknown board type:%d.\n",
 			  r92su->eeprom.board_type);
 		return -EINVAL;
 	}

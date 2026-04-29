@@ -46,7 +46,7 @@ static int r92su_parse_firmware(struct r92su *r92su)
 	unsigned int dmem_size;
 
 	if (r92su->fw->size > RTL8192_MAX_RAW_FIRMWARE_CODE_SIZE) {
-		R92SU_ERR(r92su, "firmware is too big.\n");
+		R92SU_DBG(r92su, "firmware is too big.\n");
 		return -EINVAL;
 	}
 
@@ -54,7 +54,7 @@ static int r92su_parse_firmware(struct r92su *r92su)
 
 	if ((hdr->signature != cpu_to_le16(R8192SU_FW_SIGNATURE)) &&
 	    (hdr->signature != cpu_to_le16(R8712SU_FW_SIGNATURE))) {
-		R92SU_ERR(r92su, "firmware signature check has failed.\n");
+		R92SU_DBG(r92su, "firmware signature check has failed.\n");
 		return -EINVAL;
 	}
 
@@ -69,17 +69,17 @@ static int r92su_parse_firmware(struct r92su *r92su)
 	r92su->fw_sram = r92su->fw_imem + imem_size;
 
 	if (imem_size == 0 || imem_size >= RTL8192_MAX_FIRMWARE_CODE_SIZE) {
-		R92SU_ERR(r92su, "firmware's imem size is out of range\n");
+		R92SU_DBG(r92su, "firmware's imem size is out of range\n");
 		return -EINVAL;
 	}
 
 	if (sram_size == 0 || sram_size >= RTL8192_MAX_FIRMWARE_CODE_SIZE) {
-		R92SU_ERR(r92su, "firmware's sram size is out of range\n");
+		R92SU_DBG(r92su, "firmware's sram size is out of range\n");
 		return -EINVAL;
 	}
 
 	if (dmem_size != sizeof(struct fw_priv)) {
-		R92SU_ERR(r92su, "firmware's dmem size is out of range\n");
+		R92SU_DBG(r92su, "firmware's dmem size is out of range\n");
 		return -EINVAL;
 	}
 
@@ -174,7 +174,7 @@ static int r92su_upload_mem_wait(struct r92su *r92su, const u8 done_flag,
 	} while (--tries);
 
 	if (!(cpu_status & done2_flag) || (tries == 0)) {
-		R92SU_ERR(r92su, "firmware's %s upload %s cpu_status=0x%x\n",
+		R92SU_DBG(r92su, "firmware's %s upload %s cpu_status=0x%x\n",
 			mem, (tries == 0) ? "timedout" : "failed", cpu_status);
 		return -EAGAIN;
 	}
@@ -308,7 +308,7 @@ int r92su_load_firmware(struct r92su *r92su)
 	err = request_firmware(&r92su->fw, RTL8192SU_FIRMWARE,
 			       &r92su->udev->dev);
 	if (err) {
-		R92SU_ERR(r92su, "firmware '%s' not found.\n",
+		R92SU_DBG(r92su, "firmware '%s' not found.\n",
 			  RTL8192SU_FIRMWARE);
 		return err;
 	}
