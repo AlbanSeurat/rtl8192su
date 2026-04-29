@@ -28,6 +28,7 @@
  * Larry Finger <Larry.Finger@lwfinger.net>
  *
  *****************************************************************************/
+#include <linux/version.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/ieee80211.h>
@@ -923,9 +924,14 @@ static int _r92su_set_channel(struct r92su *r92su)
 	return r92su_h2c_set_channel(r92su, chan->hw_value);
 }
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6, 13, 0)
 static int r92su_set_monitor_channel(struct wiphy *wiphy,
 				     struct net_device *ndev,
 				     struct cfg80211_chan_def *chandef)
+#else
+static int r92su_set_monitor_channel(struct wiphy *wiphy,
+				     struct cfg80211_chan_def *chandef)
+#endif
 {
 	struct r92su *r92su = wiphy_priv(wiphy);
 	int err = -EAGAIN;
@@ -952,6 +958,7 @@ out:
 
 	return err;
 }
+
 
 static int r92su_add_key(struct wiphy *wiphy, struct net_device *ndev,
 			 int link_id, u8 idx, bool pairwise, const u8 *mac_addr,
@@ -1097,7 +1104,11 @@ out:
 	return err;
 }
 
+#if LINUX_VERSION_CODE > KERNEL_VERSION(6, 13, 0)
 static int r92su_set_wiphy_params(struct wiphy *wiphy, int radio_idx, u32 changed)
+#else
+static int r92su_set_wiphy_params(struct wiphy *wiphy, u32 changed)
+#endif
 {
 	/* WIPHY_PARAM_FRAG_THRESHOLD
 	 *	For some reason, the firmware increases the sequence
