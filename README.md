@@ -29,6 +29,8 @@ to load the module.
 
 ### Building for RTL8192SU (arm64 cross-compile)
 
+The RTL8192SU driver works with the latest 6.x series kernel versions.
+
 To compile the RTL8192SU driver for a specific kernel source and architecture, use:
 
 ```
